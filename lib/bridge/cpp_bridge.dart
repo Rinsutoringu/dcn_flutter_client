@@ -158,6 +158,8 @@ class CppBridge {
   Future<BridgeResponse> querySemester(String s) =>
       _send(['QUERY_SEMESTER', s]);
   Future<BridgeResponse> viewAll() => _send(['VIEW_ALL']);
+  Future<BridgeResponse> viewAllPage(int offset, int limit) =>
+      _send(['VIEW_ALL_PAGE', '$offset', '$limit']);
   Future<BridgeResponse> add(Course c) => _send([
     'ADD',
     c.code,

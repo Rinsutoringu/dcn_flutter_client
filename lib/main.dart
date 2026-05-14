@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'bridge/cpp_bridge.dart';
@@ -66,6 +67,64 @@ class _HomePageState extends State<HomePage> {
   String _user = '';
   bool _logExpanded = false;
 
+  // ────────────────────────────────────────────────────────────
+  // 全局课程缓存：连接后后台分批预取，弹窗共享同一份数据
+  // ────────────────────────────────────────────────────────────
+  final ValueNotifier<List<Course>> _allCourses =
+      ValueNotifier<List<Course>>(const []);
+  final ValueNotifier<bool> _allLoaded = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _prefetching = ValueNotifier<bool>(false);
+  final ValueNotifier<String?> _prefetchError = ValueNotifier<String?>(null);
+  int _prefetchToken = 0;
+  static const int _prefetchPageSize = 200;
+  static const Duration _prefetchInterval = Duration(milliseconds: 500);
+
+  Future<void> _startPrefetch() async {
+    final bridge = _bridge;
+    if (bridge == null) return;
+    final token = ++_prefetchToken;
+    _allCourses.value = const [];
+    _allLoaded.value = false;
+    _prefetchError.value = null;
+    _prefetching.value = true;
+    _log('*', 'prefetch all courses: start');
+    try {
+      final acc = <Course>[];
+      while (true) {
+        if (token != _prefetchToken || !mounted) return;
+        final r = await bridge.viewAllPage(acc.length, _prefetchPageSize);
+        if (token != _prefetchToken || !mounted) return;
+        if (r.isErr) {
+          _prefetchError.value = r.message;
+          _log('!', 'prefetch error: ${r.message}');
+          return;
+        }
+        acc.addAll(r.courses);
+        _allCourses.value = List<Course>.unmodifiable(acc);
+        if (r.courses.length < _prefetchPageSize) {
+          _allLoaded.value = true;
+          _log('*', 'prefetch done: ${acc.length} courses');
+          return;
+        }
+        await Future<void>.delayed(_prefetchInterval);
+      }
+    } finally {
+      if (token == _prefetchToken && mounted) {
+        _prefetching.value = false;
+      }
+    }
+  }
+
+  void _cancelPrefetch() {
+    _prefetchToken++;
+    _prefetching.value = false;
+  }
+
+  Future<void> _refreshAll() async {
+    _cancelPrefetch();
+    await _startPrefetch();
+  }
+
   String _exeGuess() {
     final candidates = [
       r'..\..\build\programs\Client\dcn_client.exe',
@@ -102,6 +161,11 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _cancelPrefetch();
+    _allCourses.dispose();
+    _allLoaded.dispose();
+    _prefetching.dispose();
+    _prefetchError.dispose();
     _bridge?.stop();
     super.dispose();
   }
@@ -144,11 +208,19 @@ class _HomePageState extends State<HomePage> {
                     user: _user,
                     defaultExePath: _exeGuess(),
                     onBridgeStart: _startBridge,
-                    onConnected: () => setState(() {
-                      _connected = true;
-                      _isAdmin = false;
-                      _user = '';
-                    }),
+                    allCourses: _allCourses,
+                    allLoaded: _allLoaded,
+                    prefetching: _prefetching,
+                    prefetchError: _prefetchError,
+                    onRefreshAll: _refreshAll,
+                    onConnected: () {
+                      setState(() {
+                        _connected = true;
+                        _isAdmin = false;
+                        _user = '';
+                      });
+                      _startPrefetch();
+                    },
                     onPromoted: (user) => setState(() {
                       _isAdmin = true;
                       _user = user;
@@ -157,11 +229,17 @@ class _HomePageState extends State<HomePage> {
                       _isAdmin = false;
                       _user = '';
                     }),
-                    onDisconnected: () => setState(() {
-                      _connected = false;
-                      _isAdmin = false;
-                      _user = '';
-                    }),
+                    onDisconnected: () {
+                      _cancelPrefetch();
+                      _allCourses.value = const [];
+                      _allLoaded.value = false;
+                      _prefetchError.value = null;
+                      setState(() {
+                        _connected = false;
+                        _isAdmin = false;
+                        _user = '';
+                      });
+                    },
                   ),
                 ),
                 _LogPanel(
@@ -333,6 +411,11 @@ class _MainPanel extends StatefulWidget {
   final void Function(String user) onPromoted;
   final VoidCallback onDemoted;
   final VoidCallback onDisconnected;
+  final ValueListenable<List<Course>> allCourses;
+  final ValueListenable<bool> allLoaded;
+  final ValueListenable<bool> prefetching;
+  final ValueListenable<String?> prefetchError;
+  final Future<void> Function() onRefreshAll;
 
   const _MainPanel({
     required this.layout,
@@ -346,6 +429,11 @@ class _MainPanel extends StatefulWidget {
     required this.onPromoted,
     required this.onDemoted,
     required this.onDisconnected,
+    required this.allCourses,
+    required this.allLoaded,
+    required this.prefetching,
+    required this.prefetchError,
+    required this.onRefreshAll,
   });
 
   @override
@@ -468,14 +556,7 @@ class _MainPanelState extends State<_MainPanel> {
   }
 
   Future<void> _viewAll() async {
-    if (widget.bridge == null || _busy) return;
-    final r = await widget.bridge!.viewAll();
-    if (!mounted) return;
-    if (r.isErr) {
-      _setStatus('view_all error: ${r.message}');
-      return;
-    }
-    _setStatus('${r.courses.length} course(s) loaded');
+    if (widget.bridge == null) return;
     await showGeneralDialog<void>(
       context: context,
       useRootNavigator: true,
@@ -484,7 +565,11 @@ class _MainPanelState extends State<_MainPanel> {
       barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 280),
       pageBuilder: (ctx, a1, a2) => _AllCoursesDialog(
-        allCourses: r.courses,
+        coursesListenable: widget.allCourses,
+        loadedListenable: widget.allLoaded,
+        prefetchingListenable: widget.prefetching,
+        errorListenable: widget.prefetchError,
+        onRefresh: widget.onRefreshAll,
         layout: widget.layout,
       ),
       transitionBuilder: (ctx, anim, secondary, child) {
@@ -731,6 +816,28 @@ class _MainPanelState extends State<_MainPanel> {
         icon: const Icon(Icons.list_alt),
         label: const Text('查看全部'),
       ),
+      ValueListenableBuilder<bool>(
+        valueListenable: widget.prefetching,
+        builder: (ctx, fetching, _) {
+          return ValueListenableBuilder<List<Course>>(
+            valueListenable: widget.allCourses,
+            builder: (ctx, list, _) {
+              final count = list.length;
+              return OutlinedButton.icon(
+                onPressed: (_busy || fetching) ? null : widget.onRefreshAll,
+                icon: fetching
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+                label: Text(fetching ? '刷新中…($count)' : '刷新课程'),
+              );
+            },
+          );
+        },
+      ),
       if (widget.isAdmin)
         FilledButton.tonalIcon(
           onPressed: _busy ? null : () => _showCourseDialog(),
@@ -950,9 +1057,20 @@ const _kSortKeyLabels = {
 };
 
 class _AllCoursesDialog extends StatelessWidget {
-  final List<Course> allCourses;
+  final ValueListenable<List<Course>> coursesListenable;
+  final ValueListenable<bool> loadedListenable;
+  final ValueListenable<bool> prefetchingListenable;
+  final ValueListenable<String?> errorListenable;
+  final Future<void> Function() onRefresh;
   final LayoutSize layout;
-  const _AllCoursesDialog({required this.allCourses, required this.layout});
+  const _AllCoursesDialog({
+    required this.coursesListenable,
+    required this.loadedListenable,
+    required this.prefetchingListenable,
+    required this.errorListenable,
+    required this.onRefresh,
+    required this.layout,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -988,7 +1106,11 @@ class _AllCoursesDialog extends StatelessWidget {
           width: math.max(360.0, targetW),
           height: math.max(480.0, targetH),
           child: _AllCoursesView(
-            allCourses: allCourses,
+            coursesListenable: coursesListenable,
+            loadedListenable: loadedListenable,
+            prefetchingListenable: prefetchingListenable,
+            errorListenable: errorListenable,
+            onRefresh: onRefresh,
             layout: layout,
             onClose: () => Navigator.of(context, rootNavigator: true).pop(),
           ),
@@ -999,11 +1121,19 @@ class _AllCoursesDialog extends StatelessWidget {
 }
 
 class _AllCoursesView extends StatefulWidget {
-  final List<Course> allCourses;
+  final ValueListenable<List<Course>> coursesListenable;
+  final ValueListenable<bool> loadedListenable;
+  final ValueListenable<bool> prefetchingListenable;
+  final ValueListenable<String?> errorListenable;
+  final Future<void> Function() onRefresh;
   final LayoutSize layout;
   final VoidCallback? onClose;
   const _AllCoursesView({
-    required this.allCourses,
+    required this.coursesListenable,
+    required this.loadedListenable,
+    required this.prefetchingListenable,
+    required this.errorListenable,
+    required this.onRefresh,
     required this.layout,
     this.onClose,
   });
@@ -1026,6 +1156,16 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
 
   CourseSortKey _sortKey = CourseSortKey.code;
   bool _sortAsc = true;
+
+  late List<Course> _courses;
+
+  List<String> _suggestInstructor = const [];
+  List<String> _suggestSection = const [];
+  List<String> _suggestCode = const [];
+  List<String> _suggestClassroom = const [];
+  List<String> _suggestDay = const [];
+
+  final ScrollController _listCtl = ScrollController();
 
   String _key(Course c) => '${c.code}|${c.section}';
 
@@ -1059,36 +1199,17 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
   late List<Course> _filteredCache = const [];
   String _cacheSig = '';
 
-  late List<String> _suggestInstructor;
-  late List<String> _suggestSection;
-  late List<String> _suggestCode;
-  late List<String> _suggestClassroom;
-  late List<String> _suggestDay;
-
-  final ScrollController _listCtl = ScrollController();
-
   @override
   void initState() {
     super.initState();
-    List<String> uniq(String Function(Course) pick) {
-      final s = <String>{};
-      for (final c in widget.allCourses) {
-        final v = pick(c).trim();
-        if (v.isNotEmpty) s.add(v);
-      }
-      final l = s.toList()..sort();
-      return l;
-    }
-
-    _suggestInstructor = uniq((c) => c.instructor);
-    _suggestSection = uniq((c) => c.section);
-    _suggestCode = uniq((c) => c.code);
-    _suggestClassroom = uniq((c) => c.classroom);
-    _suggestDay = uniq((c) => c.day);
+    _courses = List<Course>.from(widget.coursesListenable.value);
+    _rebuildSuggestions();
+    widget.coursesListenable.addListener(_onCoursesChanged);
   }
 
   @override
   void dispose() {
+    widget.coursesListenable.removeListener(_onCoursesChanged);
     _listCtl.dispose();
     _instructorCtl.dispose();
     _semesterCtl.dispose();
@@ -1098,11 +1219,39 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
     super.dispose();
   }
 
+  void _onCoursesChanged() {
+    if (!mounted) return;
+    setState(() {
+      _courses = List<Course>.from(widget.coursesListenable.value);
+      _cacheSig = '';
+      _rebuildSuggestions();
+    });
+  }
+
+  void _rebuildSuggestions() {
+    List<String> uniq(String Function(Course) pick) {
+      final s = <String>{};
+      for (final c in _courses) {
+        final v = pick(c).trim();
+        if (v.isNotEmpty) s.add(v);
+      }
+      final l = s.toList()..sort();
+      return l;
+    }
+    _suggestInstructor = uniq((c) => c.instructor);
+    _suggestSection = uniq((c) => c.section);
+    _suggestCode = uniq((c) => c.code);
+    _suggestClassroom = uniq((c) => c.classroom);
+    _suggestDay = uniq((c) => c.day);
+  }
+
+  void _onFilterFocus() {}
+
   List<Course> get _filtered {
     final sig = '${_instructorCtl.text}|${_semesterCtl.text}|${_codeCtl.text}|'
-        '${_classroomCtl.text}|${_dayCtl.text}|$_sortKey|$_sortAsc|${widget.allCourses.length}';
+        '${_classroomCtl.text}|${_dayCtl.text}|$_sortKey|$_sortAsc|${_courses.length}';
     if (sig != _cacheSig) {
-      final list = widget.allCourses.where(_match).toList();
+      final list = _courses.where(_match).toList();
       list.sort(_cmp);
       _filteredCache = list;
       _cacheSig = sig;
@@ -1110,7 +1259,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
     return _filteredCache;
   }
 
-  List<Course> get _selectedCourses => widget.allCourses
+  List<Course> get _selectedCourses => _courses
       .where((c) => _selectedKeys.contains(_key(c)))
       .toList(growable: false);
 
@@ -1134,10 +1283,16 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                   ),
                   const SizedBox(width: 12),
                   Flexible(
-                    child: Text(
-                      '${_filtered.length}/${widget.allCourses.length} · 已选 ${_selectedKeys.length}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      overflow: TextOverflow.ellipsis,
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: widget.loadedListenable,
+                      builder: (ctx, loaded, _) {
+                        final suffix = loaded ? '' : '+';
+                        return Text(
+                          '${_filtered.length}/${_courses.length}$suffix · 已选 ${_selectedKeys.length}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
                     ),
                   ),
                   AnimatedSwitcher(
@@ -1294,6 +1449,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         controller: _instructorCtl,
                         suggestions: _suggestInstructor,
                         onChanged: () => setState(() {}),
+                        onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
                         label: '学期/Section',
@@ -1301,6 +1457,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         controller: _semesterCtl,
                         suggestions: _suggestSection,
                         onChanged: () => setState(() {}),
+                        onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
                         label: '编码',
@@ -1308,6 +1465,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         controller: _codeCtl,
                         suggestions: _suggestCode,
                         onChanged: () => setState(() {}),
+                        onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
                         label: '教室',
@@ -1315,6 +1473,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         controller: _classroomCtl,
                         suggestions: _suggestClassroom,
                         onChanged: () => setState(() {}),
+                        onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
                         label: '时间/Day',
@@ -1322,6 +1481,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         controller: _dayCtl,
                         suggestions: _suggestDay,
                         onChanged: () => setState(() {}),
+                        onFocus: _onFilterFocus,
                       )),
                       SizedBox(
                         width: fieldW - 48 - gap,
@@ -1393,16 +1553,77 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
               : Scrollbar(
                   controller: _listCtl,
                   thumbVisibility: true,
-                  child: ListView.builder(
+                  child: CustomScrollView(
                     controller: _listCtl,
-                    itemCount: _filtered.length,
-                    itemExtent: 72,
                     cacheExtent: 600,
-                    itemBuilder: (ctx, i) => _courseTile(_filtered[i]),
+                    slivers: [
+                      SliverFixedExtentList(
+                        itemExtent: 72,
+                        delegate: SliverChildBuilderDelegate(
+                          (ctx, i) => _courseTile(_filtered[i]),
+                          childCount: _filtered.length,
+                        ),
+                      ),
+                      SliverToBoxAdapter(child: _buildListFooter()),
+                    ],
                   ),
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _buildListFooter() {
+    return ValueListenableBuilder<String?>(
+      valueListenable: widget.errorListenable,
+      builder: (ctx, err, _) {
+        if (err != null) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline,
+                    color: Theme.of(context).colorScheme.error, size: 18),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text('加载失败: $err',
+                      style: Theme.of(context).textTheme.bodySmall),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () => widget.onRefresh(),
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          );
+        }
+        return ValueListenableBuilder<bool>(
+          valueListenable: widget.prefetchingListenable,
+          builder: (ctx, fetching, _) {
+            if (!fetching) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('正在后台同步课程…',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1481,12 +1702,13 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
 }
 
 // ───────────────── 带输入 + 下拉建议的过滤器字段 ─────────────────
-class _FilterField extends StatelessWidget {
+class _FilterField extends StatefulWidget {
   final String label;
   final IconData icon;
   final TextEditingController controller;
   final List<String> suggestions;
   final VoidCallback onChanged;
+  final VoidCallback? onFocus;
 
   const _FilterField({
     required this.label,
@@ -1494,31 +1716,58 @@ class _FilterField extends StatelessWidget {
     required this.controller,
     required this.suggestions,
     required this.onChanged,
+    this.onFocus,
   });
+
+  @override
+  State<_FilterField> createState() => _FilterFieldState();
+}
+
+class _FilterFieldState extends State<_FilterField> {
+  FocusNode? _watched;
+
+  void _bindFocus(FocusNode node) {
+    if (identical(node, _watched)) return;
+    _watched?.removeListener(_onFocusChange);
+    _watched = node;
+    node.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    if (_watched?.hasFocus == true) widget.onFocus?.call();
+  }
+
+  @override
+  void dispose() {
+    _watched?.removeListener(_onFocusChange);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Autocomplete<String>(
         optionsBuilder: (textEditingValue) {
           final q = textEditingValue.text.trim().toLowerCase();
-          if (q.isEmpty) return suggestions.take(50);
-          return suggestions
+          if (q.isEmpty) return widget.suggestions.take(50);
+          return widget.suggestions
               .where((s) => s.toLowerCase().contains(q))
               .take(50);
         },
         fieldViewBuilder:
             (context, textCtl, focusNode, onFieldSubmitted) {
-          if (textCtl.text != controller.text) {
-            textCtl.text = controller.text;
+          _bindFocus(focusNode);
+          if (textCtl.text != widget.controller.text) {
+            textCtl.text = widget.controller.text;
             textCtl.selection =
                 TextSelection.collapsed(offset: textCtl.text.length);
           }
           return TextField(
             controller: textCtl,
             focusNode: focusNode,
+            onTap: widget.onFocus,
             decoration: InputDecoration(
-              labelText: label,
-              prefixIcon: Icon(icon, size: 18),
+              labelText: widget.label,
+              prefixIcon: Icon(widget.icon, size: 18),
               isDense: true,
               border: const OutlineInputBorder(),
               suffixIcon: textCtl.text.isEmpty
@@ -1528,20 +1777,20 @@ class _FilterField extends StatelessWidget {
                       splashRadius: 16,
                       onPressed: () {
                         textCtl.clear();
-                        controller.clear();
-                        onChanged();
+                        widget.controller.clear();
+                        widget.onChanged();
                       },
                     ),
             ),
             onChanged: (v) {
-              controller.text = v;
-              onChanged();
+              widget.controller.text = v;
+              widget.onChanged();
             },
           );
         },
         onSelected: (v) {
-          controller.text = v;
-          onChanged();
+          widget.controller.text = v;
+          widget.onChanged();
         },
         optionsViewBuilder: (context, onSelected, options) {
           return Align(
