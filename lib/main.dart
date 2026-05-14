@@ -1168,14 +1168,14 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
   late List<Course> _courses;
 
   List<String> _suggestInstructor = const [];
-  List<String> _suggestSection = const [];
   List<String> _suggestCode = const [];
   List<String> _suggestClassroom = const [];
   List<String> _suggestDay = const [];
+  List<String> _suggestSemester = const [];
 
   final ScrollController _listCtl = ScrollController();
 
-  String _key(Course c) => '${c.code}|${c.section}';
+  String _key(Course c) => '${c.code}|${c.section}|${c.semester}';
 
   bool _match(Course c) {
     bool ok(String filter, String value) {
@@ -1247,10 +1247,10 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
       return l;
     }
     _suggestInstructor = uniq((c) => c.instructor);
-    _suggestSection = uniq((c) => c.section);
     _suggestCode = uniq((c) => c.code);
     _suggestClassroom = uniq((c) => c.classroom);
     _suggestDay = uniq((c) => c.day);
+    _suggestSemester = uniq((c) => c.semester);
   }
 
   void _onFilterFocus() {}
@@ -1460,10 +1460,10 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
-                        label: '学期/Section',
+                        label: '学期',
                         icon: Icons.event,
                         controller: _semesterCtl,
-                        suggestions: _suggestSection,
+                        suggestions: _suggestSemester,
                         onChanged: () => setState(() {}),
                         onFocus: _onFilterFocus,
                       )),
@@ -1756,10 +1756,9 @@ class _FilterFieldState extends State<_FilterField> {
     return Autocomplete<String>(
         optionsBuilder: (textEditingValue) {
           final q = textEditingValue.text.trim().toLowerCase();
-          if (q.isEmpty) return widget.suggestions.take(50);
+          if (q.isEmpty) return widget.suggestions;
           return widget.suggestions
-              .where((s) => s.toLowerCase().contains(q))
-              .take(50);
+              .where((s) => s.toLowerCase().contains(q));
         },
         fieldViewBuilder:
             (context, textCtl, focusNode, onFieldSubmitted) {
@@ -1855,10 +1854,22 @@ class _WeeklyCalendar extends StatelessWidget {
   }
 
   ({int startMin, int durationMin})? _slot(Course c) {
-    final dur = int.tryParse(c.duration.trim()) ?? 60;
-    final daySplit = c.day.split(RegExp(r'[\s\-_]+'));
+    final raw = c.duration.trim();
+    final range = RegExp(r'^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$')
+        .firstMatch(raw);
+    if (range != null) {
+      final sh = int.parse(range.group(1)!);
+      final sm = int.parse(range.group(2)!);
+      final eh = int.parse(range.group(3)!);
+      final em = int.parse(range.group(4)!);
+      final startMin = sh * 60 + sm;
+      var dur = (eh * 60 + em) - startMin;
+      if (dur <= 0) dur = 60;
+      return (startMin: startMin, durationMin: dur);
+    }
+    final dur = int.tryParse(raw) ?? 60;
     int startMin = 9 * 60;
-    for (final tok in daySplit) {
+    for (final tok in c.day.split(RegExp(r'[\s\-_]+'))) {
       final m = RegExp(r'^(\d{1,2}):?(\d{2})?$').firstMatch(tok);
       if (m != null) {
         final h = int.parse(m.group(1)!);
@@ -1984,7 +1995,7 @@ class _WeeklyCalendar extends StatelessWidget {
           left: hourCol + di * colW + 2,
           top: top,
           width: colW - 4,
-          height: math.max(20, h),
+          height: math.max(48, h),
           child: Material(
             color: _colorFor(c, scheme).withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(6),
@@ -1993,20 +2004,27 @@ class _WeeklyCalendar extends StatelessWidget {
               padding: const EdgeInsets.all(4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(c.code,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 11)),
-                  Text(c.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 10)),
-                  Text(c.classroom,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 10)),
+                  Flexible(
+                    child: Text(c.code,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 11)),
+                  ),
+                  Flexible(
+                    child: Text(c.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 10)),
+                  ),
+                  Flexible(
+                    child: Text(c.classroom,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 10)),
+                  ),
                 ],
               ),
             ),
