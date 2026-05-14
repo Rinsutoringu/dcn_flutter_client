@@ -596,6 +596,7 @@ class _MainPanelState extends State<_MainPanel> {
     final instructor = TextEditingController(text: edit?.instructor ?? '');
     final day = TextEditingController(text: edit?.day ?? 'Mon');
     final duration = TextEditingController(text: edit?.duration ?? '90');
+    final semester = TextEditingController(text: edit?.semester ?? '');
     final classroom = TextEditingController(text: edit?.classroom ?? '');
     final isEdit = edit != null;
 
@@ -626,11 +627,17 @@ class _MainPanelState extends State<_MainPanel> {
                         const InputDecoration(labelText: 'Instructor')),
                 TextField(
                     controller: day,
+                    enabled: !isEdit,
                     decoration: const InputDecoration(labelText: 'Day')),
                 TextField(
                     controller: duration,
+                    enabled: !isEdit,
                     decoration:
                         const InputDecoration(labelText: 'Duration (min)')),
+                TextField(
+                    controller: semester,
+                    enabled: !isEdit,
+                    decoration: const InputDecoration(labelText: 'Semester')),
                 TextField(
                     controller: classroom,
                     decoration:
@@ -653,6 +660,7 @@ class _MainPanelState extends State<_MainPanel> {
                 instructor: instructor.text.trim(),
                 day: day.text.trim(),
                 duration: duration.text.trim(),
+                semester: semester.text.trim(),
                 classroom: classroom.text.trim(),
               ),
             ),
@@ -1175,7 +1183,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
       return value.toLowerCase().contains(filter.trim().toLowerCase());
     }
     return ok(_instructorCtl.text, c.instructor) &&
-        ok(_semesterCtl.text, c.section) &&
+        ok(_semesterCtl.text, c.semester) &&
         ok(_codeCtl.text, c.code) &&
         ok(_classroomCtl.text, c.classroom) &&
         ok(_dayCtl.text, c.day);

@@ -3,7 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 class Course {
-  final String code, title, section, instructor, day, duration, classroom;
+  final String code,
+      title,
+      section,
+      instructor,
+      day,
+      duration,
+      semester,
+      classroom;
   Course({
     required this.code,
     required this.title,
@@ -11,6 +18,7 @@ class Course {
     required this.instructor,
     required this.day,
     required this.duration,
+    required this.semester,
     required this.classroom,
   });
 }
@@ -123,8 +131,8 @@ class CppBridge {
         final count = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
         final out = <Course>[];
         for (var i = 0; i < count; i++) {
-          final base = 2 + i * 7;
-          if (base + 6 >= parts.length) break;
+          final base = 2 + i * 8;
+          if (base + 7 >= parts.length) break;
           out.add(
             Course(
               code: parts[base],
@@ -133,7 +141,8 @@ class CppBridge {
               instructor: parts[base + 3],
               day: parts[base + 4],
               duration: parts[base + 5],
-              classroom: parts[base + 6],
+              semester: parts[base + 6],
+              classroom: parts[base + 7],
             ),
           );
         }
@@ -168,6 +177,7 @@ class CppBridge {
     c.instructor,
     c.day,
     c.duration,
+    c.semester,
     c.classroom,
   ]);
   Future<BridgeResponse> update(Course c) => _send([
@@ -178,6 +188,7 @@ class CppBridge {
     c.instructor,
     c.day,
     c.duration,
+    c.semester,
     c.classroom,
   ]);
   Future<BridgeResponse> deleteCourse(String code, String section) =>
