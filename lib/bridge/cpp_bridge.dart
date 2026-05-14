@@ -23,16 +23,18 @@ class Course {
   });
 }
 
-enum BridgeStatus { ok, err, data }
+enum BridgeStatus { ok, err, data, admins }
 
 class BridgeResponse {
   final BridgeStatus status;
   final String message;
   final List<Course> courses;
-  BridgeResponse(this.status, this.message, this.courses);
+  final List<String> admins;
+  BridgeResponse(this.status, this.message, this.courses, [this.admins = const []]);
   bool get isOk => status == BridgeStatus.ok;
   bool get isErr => status == BridgeStatus.err;
   bool get isData => status == BridgeStatus.data;
+  bool get isAdmins => status == BridgeStatus.admins;
 }
 
 typedef LogSink = void Function(String direction, String line);
@@ -147,6 +149,15 @@ class CppBridge {
           );
         }
         return BridgeResponse(BridgeStatus.data, '$count rows', out);
+      case 'ADMINS':
+        final count = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
+        final names = <String>[];
+        for (var i = 0; i < count; i++) {
+          final idx = 2 + i;
+          if (idx >= parts.length) break;
+          names.add(parts[idx]);
+        }
+        return BridgeResponse(BridgeStatus.admins, '$count admins', const [], names);
       default:
         return BridgeResponse(
           BridgeStatus.err,
@@ -193,6 +204,14 @@ class CppBridge {
   ]);
   Future<BridgeResponse> deleteCourse(String code, String section) =>
       _send(['DELETE', code, section]);
+
+  Future<BridgeResponse> listAdmins() => _send(['ADMIN_LIST']);
+  Future<BridgeResponse> createAdmin(String user, String pass) =>
+      _send(['ADMIN_CREATE', user, pass]);
+  Future<BridgeResponse> updateAdmin(String oldUser, String newUser, String newPass) =>
+      _send(['ADMIN_UPDATE', oldUser, newUser, newPass]);
+  Future<BridgeResponse> deleteAdmin(String user) =>
+      _send(['ADMIN_DELETE', user]);
 }
 
 class StreamQueue<T> {

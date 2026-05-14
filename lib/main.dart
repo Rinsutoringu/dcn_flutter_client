@@ -8,6 +8,44 @@ import 'bridge/cpp_bridge.dart';
 
 void main() => runApp(const DcnApp());
 
+// 统一的轻量提示：底部浮动黑色小条，Material 标准 toast 风格
+void showAppToast(BuildContext context, String message,
+    {bool error = false, Duration duration = const Duration(milliseconds: 1800)}) {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (messenger == null) return;
+  messenger
+    ..clearSnackBars()
+    ..showSnackBar(
+      SnackBar(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              error ? Icons.error_outline : Icons.check_circle_outline,
+              size: 18,
+              color: error ? const Color(0xFFFF6B6B) : const Color(0xFF4ADE80),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                message,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xE6111111),
+        elevation: 4,
+        margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        duration: duration,
+        dismissDirection: DismissDirection.horizontal,
+      ),
+    );
+}
+
 // ──────────────────────────────── 响应式断点 ────────────────────────────────
 class Breakpoints {
   static const double small = 720;   // < 720 紧凑（移动/小窗）
@@ -78,6 +116,38 @@ class _HomePageState extends State<HomePage> {
   int _prefetchToken = 0;
   static const int _prefetchPageSize = 200;
   static const Duration _prefetchInterval = Duration(milliseconds: 500);
+
+  // 管理员账号缓存：admin 登录后立即拉取，账户管理弹窗直接共享
+  final ValueNotifier<List<String>> _adminList =
+      ValueNotifier<List<String>>(const []);
+  final ValueNotifier<bool> _adminListLoaded = ValueNotifier<bool>(false);
+  final ValueNotifier<String?> _adminListError = ValueNotifier<String?>(null);
+  int _adminFetchToken = 0;
+
+  Future<void> _refreshAdminList() async {
+    final bridge = _bridge;
+    if (bridge == null || !_isAdmin) return;
+    final token = ++_adminFetchToken;
+    _adminListError.value = null;
+    final r = await bridge.listAdmins();
+    if (token != _adminFetchToken || !mounted) return;
+    if (r.isAdmins) {
+      final names = [...r.admins]..sort();
+      _adminList.value = List<String>.unmodifiable(names);
+      _adminListLoaded.value = true;
+      _log('*', 'admin list loaded: ${names.length}');
+    } else {
+      _adminListError.value = r.message;
+      _log('!', 'admin list error: ${r.message}');
+    }
+  }
+
+  void _resetAdminList() {
+    _adminFetchToken++;
+    _adminList.value = const [];
+    _adminListLoaded.value = false;
+    _adminListError.value = null;
+  }
 
   Future<void> _startPrefetch() async {
     final bridge = _bridge;
@@ -166,6 +236,9 @@ class _HomePageState extends State<HomePage> {
     _allLoaded.dispose();
     _prefetching.dispose();
     _prefetchError.dispose();
+    _adminList.dispose();
+    _adminListLoaded.dispose();
+    _adminListError.dispose();
     _bridge?.stop();
     super.dispose();
   }
@@ -221,16 +294,23 @@ class _HomePageState extends State<HomePage> {
                       });
                       _startPrefetch();
                     },
-                    onPromoted: (user) => setState(() {
-                      _isAdmin = true;
-                      _user = user;
-                    }),
-                    onDemoted: () => setState(() {
-                      _isAdmin = false;
-                      _user = '';
-                    }),
+                    onPromoted: (user) {
+                      setState(() {
+                        _isAdmin = true;
+                        _user = user;
+                      });
+                      _refreshAdminList();
+                    },
+                    onDemoted: () {
+                      _resetAdminList();
+                      setState(() {
+                        _isAdmin = false;
+                        _user = '';
+                      });
+                    },
                     onDisconnected: () {
                       _cancelPrefetch();
+                      _resetAdminList();
                       _allCourses.value = const [];
                       _allLoaded.value = false;
                       _prefetchError.value = null;
@@ -240,6 +320,10 @@ class _HomePageState extends State<HomePage> {
                         _user = '';
                       });
                     },
+                    adminList: _adminList,
+                    adminListLoaded: _adminListLoaded,
+                    adminListError: _adminListError,
+                    onRefreshAdmins: _refreshAdminList,
                   ),
                 ),
                 _LogPanel(
@@ -416,6 +500,10 @@ class _MainPanel extends StatefulWidget {
   final ValueListenable<bool> prefetching;
   final ValueListenable<String?> prefetchError;
   final Future<void> Function() onRefreshAll;
+  final ValueListenable<List<String>> adminList;
+  final ValueListenable<bool> adminListLoaded;
+  final ValueListenable<String?> adminListError;
+  final Future<void> Function() onRefreshAdmins;
 
   const _MainPanel({
     required this.layout,
@@ -434,6 +522,10 @@ class _MainPanel extends StatefulWidget {
     required this.prefetching,
     required this.prefetchError,
     required this.onRefreshAll,
+    required this.adminList,
+    required this.adminListLoaded,
+    required this.adminListError,
+    required this.onRefreshAdmins,
   });
 
   @override
@@ -449,7 +541,6 @@ class _MainPanelState extends State<_MainPanel> {
   final _queryCtl = TextEditingController();
   List<Course> _courses = [];
   bool _busy = false;
-  String _status = '';
 
   Future<void> _withBusy(Future<void> Function() fn) async {
     if (_busy) return;
@@ -461,7 +552,8 @@ class _MainPanelState extends State<_MainPanel> {
     }
   }
 
-  void _setStatus(String s) => setState(() => _status = s);
+  void _toast(String s, {bool error = false}) =>
+      showAppToast(context, s, error: error);
 
   Future<void> _connect() async {
     await _withBusy(() async {
@@ -470,13 +562,13 @@ class _MainPanelState extends State<_MainPanel> {
         final port = int.tryParse(_portCtl.text) ?? 9001;
         final c1 = await bridge.connect(_hostCtl.text, port);
         if (!c1.isOk) {
-          _setStatus('connect failed: ${c1.message}');
+          _toast('连接失败: ${c1.message}', error: true);
           return;
         }
         widget.onConnected();
-        _setStatus('connected as student (read-only)');
+        _toast('已连接（学生身份）');
       } catch (e) {
-        _setStatus('error: $e');
+        _toast('错误: $e', error: true);
       }
     });
   }
@@ -490,11 +582,11 @@ class _MainPanelState extends State<_MainPanel> {
     await _withBusy(() async {
       final r = await widget.bridge!.login(result.user, result.pass);
       if (!r.isOk) {
-        _setStatus('login failed: ${r.message}');
+        _toast('登录失败: ${r.message}', error: true);
         return;
       }
       widget.onPromoted(result.user);
-      _setStatus('promoted: admin (${result.user})');
+      _toast('已切换至管理员: ${result.user}');
     });
   }
 
@@ -502,12 +594,56 @@ class _MainPanelState extends State<_MainPanel> {
     await _withBusy(() async {
       final r = await widget.bridge!.logout();
       if (!r.isOk) {
-        _setStatus('logout failed: ${r.message}');
+        _toast('登出失败: ${r.message}', error: true);
         return;
       }
       widget.onDemoted();
-      _setStatus('demoted: student');
+      _toast('已退出管理员');
     });
+  }
+
+  Future<void> _manageAdmins() async {
+    final bridge = widget.bridge;
+    if (bridge == null) return;
+    final selfChangedPassword = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _AdminManagementDialog(
+        bridge: bridge,
+        currentUser: widget.user,
+        adminList: widget.adminList,
+        adminListLoaded: widget.adminListLoaded,
+        adminListError: widget.adminListError,
+        onRefresh: widget.onRefreshAdmins,
+      ),
+    );
+    if (selfChangedPassword == true && mounted) {
+      await _withBusy(() async {
+        try {
+          await bridge.logout();
+        } catch (_) {}
+        widget.onDemoted();
+      });
+      _toast('密码已修改，已自动登出');
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(children: [
+            Icon(Icons.info_outline),
+            SizedBox(width: 8),
+            Text('提示'),
+          ]),
+          content: const Text('你修改了自己的密码，已自动登出。请使用新密码重新登录。'),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Future<void> _disconnect() async {
@@ -518,10 +654,8 @@ class _MainPanelState extends State<_MainPanel> {
         await widget.bridge?.stop();
       } catch (_) {}
       widget.onDisconnected();
-      setState(() {
-        _courses = [];
-        _status = 'disconnected';
-      });
+      setState(() => _courses = []);
+      _toast('已断开');
     });
   }
 
@@ -530,7 +664,7 @@ class _MainPanelState extends State<_MainPanel> {
     await _withBusy(() async {
       final arg = _queryCtl.text.trim();
       if (arg.isEmpty) {
-        _setStatus('enter a query value');
+        _toast('请输入查询条件', error: true);
         return;
       }
       late BridgeResponse r;
@@ -546,11 +680,11 @@ class _MainPanelState extends State<_MainPanel> {
           break;
       }
       if (r.isErr) {
-        _setStatus('query error: ${r.message}');
+        _toast('查询失败: ${r.message}', error: true);
         setState(() => _courses = []);
       } else {
         setState(() => _courses = r.courses);
-        _setStatus('${r.courses.length} result(s)');
+        _toast('查询成功：${r.courses.length} 条结果');
       }
     });
   }
@@ -675,9 +809,12 @@ class _MainPanelState extends State<_MainPanel> {
       final r = isEdit
           ? await widget.bridge!.update(result)
           : await widget.bridge!.add(result);
-      _setStatus(
-          r.isOk ? (isEdit ? 'updated' : 'added') : 'failed: ${r.message}');
-      if (r.isOk) await _query();
+      if (r.isOk) {
+        _toast(isEdit ? '课程已更新' : '课程已新增');
+        await _query();
+      } else {
+        _toast('${isEdit ? "更新" : "新增"}失败: ${r.message}', error: true);
+      }
     });
   }
 
@@ -700,8 +837,12 @@ class _MainPanelState extends State<_MainPanel> {
     if (ok != true) return;
     await _withBusy(() async {
       final r = await widget.bridge!.deleteCourse(c.code, c.section);
-      _setStatus(r.isOk ? 'deleted' : 'failed: ${r.message}');
-      if (r.isOk) await _query();
+      if (r.isOk) {
+        _toast('课程已删除');
+        await _query();
+      } else {
+        _toast('删除失败: ${r.message}', error: true);
+      }
     });
   }
 
@@ -744,20 +885,6 @@ class _MainPanelState extends State<_MainPanel> {
             child: widget.connected
                 ? _buildCourseList()
                 : const SizedBox.shrink(),
-          ),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            transitionBuilder: (child, anim) => FadeTransition(
-              opacity: anim,
-              child: SizeTransition(sizeFactor: anim, child: child),
-            ),
-            child: _status.isEmpty
-                ? const SizedBox.shrink(key: ValueKey('status-empty'))
-                : Padding(
-                    key: ValueKey('status-$_status'),
-                    padding: const EdgeInsets.only(top: 12),
-                    child: _StatusBar(status: _status, busy: _busy),
-                  ),
           ),
         ],
       ),
@@ -857,6 +984,12 @@ class _MainPanelState extends State<_MainPanel> {
           onPressed: _busy ? null : _promoteAdmin,
           icon: const Icon(Icons.admin_panel_settings),
           label: const Text('管理员登录'),
+        ),
+      if (widget.isAdmin)
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _manageAdmins,
+          icon: const Icon(Icons.manage_accounts),
+          label: const Text('账户管理'),
         ),
       if (widget.isAdmin)
         OutlinedButton.icon(
@@ -1046,6 +1179,371 @@ class _AdminLoginDialogState extends State<_AdminLoginDialog> {
             (user: _userCtl.text.trim(), pass: _passCtl.text),
           ),
           child: const Text('登录'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminManagementDialog extends StatefulWidget {
+  final CppBridge bridge;
+  final String currentUser;
+  final ValueListenable<List<String>> adminList;
+  final ValueListenable<bool> adminListLoaded;
+  final ValueListenable<String?> adminListError;
+  final Future<void> Function() onRefresh;
+  const _AdminManagementDialog({
+    required this.bridge,
+    required this.currentUser,
+    required this.adminList,
+    required this.adminListLoaded,
+    required this.adminListError,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_AdminManagementDialog> createState() => _AdminManagementDialogState();
+}
+
+class _AdminManagementDialogState extends State<_AdminManagementDialog> {
+  bool _busy = false;
+  bool _selfPasswordChanged = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 仅在缓存还未加载时触发首拉，否则直接显示缓存
+    if (!widget.adminListLoaded.value && widget.adminListError.value == null) {
+      widget.onRefresh();
+    }
+  }
+
+  Future<void> _withBusy(Future<void> Function() fn) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await fn();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _create() async {
+    final result = await showDialog<({String user, String pass})>(
+      context: context,
+      builder: (_) => const _AdminCreateDialog(),
+    );
+    if (result == null) return;
+    if (result.user.isEmpty || result.pass.isEmpty) return;
+    await _withBusy(() async {
+      final r = await widget.bridge.createAdmin(result.user, result.pass);
+      if (!mounted) return;
+      if (!r.isOk) {
+        _showSnack('新建失败: ${r.message}', error: true);
+        return;
+      }
+      _showSnack('管理员已创建: ${result.user}');
+      await widget.onRefresh();
+    });
+  }
+
+  Future<void> _edit(String oldName) async {
+    final result = await showDialog<({String newUser, String newPass})>(
+      context: context,
+      builder: (_) => _AdminEditDialog(originalName: oldName),
+    );
+    if (result == null) return;
+    final newUser = result.newUser.trim();
+    if (newUser.isEmpty) return;
+    await _withBusy(() async {
+      final r = await widget.bridge.updateAdmin(oldName, newUser, result.newPass);
+      if (!mounted) return;
+      if (!r.isOk) {
+        _showSnack('修改失败: ${r.message}', error: true);
+        return;
+      }
+      if (oldName == widget.currentUser && result.newPass.isNotEmpty) {
+        _selfPasswordChanged = true;
+        Navigator.pop(context, true);
+        return;
+      }
+      _showSnack('管理员已修改: $oldName → $newUser');
+      await widget.onRefresh();
+    });
+  }
+
+  Future<void> _delete(String name) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要删除管理员账户 "$name" 吗？此操作不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    await _withBusy(() async {
+      final r = await widget.bridge.deleteAdmin(name);
+      if (!mounted) return;
+      if (!r.isOk) {
+        _showSnack('删除失败: ${r.message}', error: true);
+        return;
+      }
+      _showSnack('管理员已删除: $name');
+      await widget.onRefresh();
+    });
+  }
+
+  void _showSnack(String msg, {bool error = false}) {
+    showAppToast(context, msg, error: error);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: Row(children: [
+        const Icon(Icons.manage_accounts),
+        const SizedBox(width: 8),
+        const Text('管理员账户'),
+        const Spacer(),
+        IconButton(
+          tooltip: '刷新',
+          onPressed: _busy ? null : widget.onRefresh,
+          icon: const Icon(Icons.refresh),
+        ),
+        IconButton(
+          tooltip: '新增',
+          onPressed: _busy ? null : _create,
+          icon: const Icon(Icons.person_add),
+        ),
+      ]),
+      content: SizedBox(
+        width: 420,
+        height: 360,
+        child: ValueListenableBuilder<List<String>>(
+          valueListenable: widget.adminList,
+          builder: (ctx, admins, _) {
+            return ValueListenableBuilder<bool>(
+              valueListenable: widget.adminListLoaded,
+              builder: (ctx, loaded, _) {
+                return ValueListenableBuilder<String?>(
+                  valueListenable: widget.adminListError,
+                  builder: (ctx, error, _) {
+                    if (!loaded && error == null) {
+                      return const Center(
+                          child: CircularProgressIndicator());
+                    }
+                    if (error != null) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.error_outline,
+                                size: 48, color: scheme.error),
+                            const SizedBox(height: 8),
+                            Text(error),
+                            const SizedBox(height: 8),
+                            FilledButton(
+                              onPressed: widget.onRefresh,
+                              child: const Text('重试'),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    if (admins.isEmpty) {
+                      return const Center(child: Text('（无管理员）'));
+                    }
+                    return ListView.separated(
+                      itemCount: admins.length,
+                      separatorBuilder: (ctx, i) =>
+                          const Divider(height: 1),
+                      itemBuilder: (ctx, i) {
+                        final name = admins[i];
+                        final isSelf = name == widget.currentUser;
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: isSelf
+                                ? scheme.primaryContainer
+                                : scheme.surfaceContainerHighest,
+                            child: Icon(
+                              isSelf
+                                  ? Icons.person
+                                  : Icons.admin_panel_settings,
+                              size: 20,
+                            ),
+                          ),
+                          title: Text(name),
+                          subtitle:
+                              isSelf ? const Text('（当前账户）') : null,
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: '编辑',
+                                onPressed:
+                                    _busy ? null : () => _edit(name),
+                                icon: const Icon(Icons.edit),
+                              ),
+                              IconButton(
+                                tooltip:
+                                    isSelf ? '不能删除自己' : '删除',
+                                onPressed: (_busy || isSelf)
+                                    ? null
+                                    : () => _delete(name),
+                                icon: const Icon(Icons.delete_outline),
+                                color: isSelf ? null : scheme.error,
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy
+              ? null
+              : () => Navigator.pop(context, _selfPasswordChanged),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminCreateDialog extends StatefulWidget {
+  const _AdminCreateDialog();
+  @override
+  State<_AdminCreateDialog> createState() => _AdminCreateDialogState();
+}
+
+class _AdminCreateDialogState extends State<_AdminCreateDialog> {
+  final _userCtl = TextEditingController();
+  final _passCtl = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Row(children: [
+        Icon(Icons.person_add),
+        SizedBox(width: 8),
+        Text('新增管理员'),
+      ]),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _userCtl,
+              decoration: const InputDecoration(
+                labelText: 'Username',
+                prefixIcon: Icon(Icons.person),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _passCtl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                prefixIcon: Icon(Icons.lock),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            (user: _userCtl.text.trim(), pass: _passCtl.text),
+          ),
+          child: const Text('创建'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminEditDialog extends StatefulWidget {
+  final String originalName;
+  const _AdminEditDialog({required this.originalName});
+  @override
+  State<_AdminEditDialog> createState() => _AdminEditDialogState();
+}
+
+class _AdminEditDialogState extends State<_AdminEditDialog> {
+  late final _userCtl = TextEditingController(text: widget.originalName);
+  final _passCtl = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Row(children: [
+        const Icon(Icons.edit),
+        const SizedBox(width: 8),
+        Text('编辑：${widget.originalName}'),
+      ]),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _userCtl,
+              decoration: const InputDecoration(
+                labelText: 'Username',
+                prefixIcon: Icon(Icons.person),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _passCtl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'New Password (留空表示不修改)',
+                prefixIcon: Icon(Icons.lock),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(
+            context,
+            (newUser: _userCtl.text.trim(), newPass: _passCtl.text),
+          ),
+          child: const Text('保存'),
         ),
       ],
     );
@@ -2086,37 +2584,3 @@ class _WeeklyCalendar extends StatelessWidget {
   }
 }
 
-class _StatusBar extends StatelessWidget {
-  final String status;
-  final bool busy;
-  const _StatusBar({required this.status, required this.busy});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          if (busy)
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else
-            Icon(Icons.info_outline,
-                size: 16,
-                color: Theme.of(context).colorScheme.primary),
-          const SizedBox(width: 8),
-          Expanded(
-              child: Text(status,
-                  style: Theme.of(context).textTheme.bodyMedium)),
-        ],
-      ),
-    );
-  }
-}
