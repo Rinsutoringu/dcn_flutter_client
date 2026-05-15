@@ -188,8 +188,9 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
 
     case WM_GETMINMAXINFO: {
-      // 强制窗口最小尺寸（含标题栏/边框），防止用户拖小到控件错位。
-      // 数值与 lib/main.dart 中 Breakpoints.minAppWidth / minAppHeight 保持一致。
+      // Enforce a minimum window size (including title bar and borders) so
+      // controls don't get clipped. Values must match Breakpoints.minAppWidth
+      // / minAppHeight in lib/main.dart.
       auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
       const UINT dpi = FlutterDesktopGetDpiForHWND(hwnd);
       const double scale = dpi / 96.0;

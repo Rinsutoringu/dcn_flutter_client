@@ -8,7 +8,7 @@ import 'bridge/cpp_bridge.dart';
 
 void main() => runApp(const DcnApp());
 
-// 统一的轻量提示：底部浮动黑色小条，Material 标准 toast 风格
+// Unified toast: bottom-floating dark bar, Material snackbar style
 void showAppToast(BuildContext context, String message,
     {bool error = false, Duration duration = const Duration(milliseconds: 1800)}) {
   final messenger = ScaffoldMessenger.maybeOf(context);
@@ -46,14 +46,12 @@ void showAppToast(BuildContext context, String message,
     );
 }
 
-// ──────────────────────────────── 响应式断点 ────────────────────────────────
 class Breakpoints {
-  static const double small = 720;   // < 720 紧凑（移动/小窗）
-  static const double medium = 1100; // 720-1100 中等
-  // ≥ 1100 大屏
+  static const double small = 720;
+  static const double medium = 1100;
   static const double minAppWidth = 480;
   static const double minAppHeight = 560;
-  static const double maxAppContent = 1600; // 内容最大铺开宽度
+  static const double maxAppContent = 1600;
 }
 
 enum LayoutSize { small, medium, large }
@@ -105,9 +103,7 @@ class _HomePageState extends State<HomePage> {
   String _user = '';
   bool _logExpanded = false;
 
-  // ────────────────────────────────────────────────────────────
-  // 全局课程缓存：连接后后台分批预取，弹窗共享同一份数据
-  // ────────────────────────────────────────────────────────────
+  // Global course cache: prefetched in background after connect, shared across dialogs
   final ValueNotifier<List<Course>> _allCourses =
       ValueNotifier<List<Course>>(const []);
   final ValueNotifier<bool> _allLoaded = ValueNotifier<bool>(false);
@@ -117,7 +113,7 @@ class _HomePageState extends State<HomePage> {
   static const int _prefetchPageSize = 200;
   static const Duration _prefetchInterval = Duration(milliseconds: 500);
 
-  // 管理员账号缓存：admin 登录后立即拉取，账户管理弹窗直接共享
+  // Admin list cache: fetched on login, shared with admin management dialog
   final ValueNotifier<List<String>> _adminList =
       ValueNotifier<List<String>>(const []);
   final ValueNotifier<bool> _adminListLoaded = ValueNotifier<bool>(false);
@@ -247,7 +243,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('DCN1003 课程表客户端'),
+        title: const Text('DCN1003 Course Schedule Client'),
         actions: [
           if (_connected)
             Padding(
@@ -562,13 +558,13 @@ class _MainPanelState extends State<_MainPanel> {
         final port = int.tryParse(_portCtl.text) ?? 9001;
         final c1 = await bridge.connect(_hostCtl.text, port);
         if (!c1.isOk) {
-          _toast('连接失败: ${c1.message}', error: true);
+          _toast('Connection failed: ${c1.message}', error: true);
           return;
         }
         widget.onConnected();
-        _toast('已连接（学生身份）');
+        _toast('Connected as student');
       } catch (e) {
-        _toast('错误: $e', error: true);
+        _toast('Error: $e', error: true);
       }
     });
   }
@@ -582,11 +578,11 @@ class _MainPanelState extends State<_MainPanel> {
     await _withBusy(() async {
       final r = await widget.bridge!.login(result.user, result.pass);
       if (!r.isOk) {
-        _toast('登录失败: ${r.message}', error: true);
+        _toast('Login failed: ${r.message}', error: true);
         return;
       }
       widget.onPromoted(result.user);
-      _toast('已切换至管理员: ${result.user}');
+      _toast('Signed in as admin: ${result.user}');
     });
   }
 
@@ -594,11 +590,11 @@ class _MainPanelState extends State<_MainPanel> {
     await _withBusy(() async {
       final r = await widget.bridge!.logout();
       if (!r.isOk) {
-        _toast('登出失败: ${r.message}', error: true);
+        _toast('Logout failed: ${r.message}', error: true);
         return;
       }
       widget.onDemoted();
-      _toast('已退出管理员');
+      _toast('Signed out admin');
     });
   }
 
@@ -624,7 +620,7 @@ class _MainPanelState extends State<_MainPanel> {
         } catch (_) {}
         widget.onDemoted();
       });
-      _toast('密码已修改，已自动登出');
+      _toast('Password changed; you have been signed out');
       if (!mounted) return;
       await showDialog<void>(
         context: context,
@@ -632,13 +628,13 @@ class _MainPanelState extends State<_MainPanel> {
           title: const Row(children: [
             Icon(Icons.info_outline),
             SizedBox(width: 8),
-            Text('提示'),
+              Text('Info'),
           ]),
-          content: const Text('你修改了自己的密码，已自动登出。请使用新密码重新登录。'),
+          content: const Text('Your password was changed. You have been signed out. Please sign in again with the new password.'),
           actions: [
             FilledButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('确定'),
+              child: const Text('OK'),
             ),
           ],
         ),
@@ -655,7 +651,7 @@ class _MainPanelState extends State<_MainPanel> {
       } catch (_) {}
       widget.onDisconnected();
       setState(() => _courses = []);
-      _toast('已断开');
+      _toast('Disconnected');
     });
   }
 
@@ -664,7 +660,7 @@ class _MainPanelState extends State<_MainPanel> {
     await _withBusy(() async {
       final arg = _queryCtl.text.trim();
       if (arg.isEmpty) {
-        _toast('请输入查询条件', error: true);
+        _toast('Enter a search term', error: true);
         return;
       }
       late BridgeResponse r;
@@ -680,11 +676,11 @@ class _MainPanelState extends State<_MainPanel> {
           break;
       }
       if (r.isErr) {
-        _toast('查询失败: ${r.message}', error: true);
+        _toast('Search failed: ${r.message}', error: true);
         setState(() => _courses = []);
       } else {
         setState(() => _courses = r.courses);
-        _toast('查询成功：${r.courses.length} 条结果');
+        _toast('${r.courses.length} results');
       }
     });
   }
@@ -695,7 +691,7 @@ class _MainPanelState extends State<_MainPanel> {
       context: context,
       useRootNavigator: true,
       barrierDismissible: true,
-      barrierLabel: '关闭',
+      barrierLabel: 'Close',
       barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 280),
       pageBuilder: (ctx, a1, a2) => _AllCoursesDialog(
@@ -737,7 +733,7 @@ class _MainPanelState extends State<_MainPanel> {
     final result = await showDialog<Course>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(isEdit ? '编辑课程' : '新增课程'),
+        title: Text(isEdit ? 'Edit course' : 'New course'),
         content: SizedBox(
           width: 400,
           child: SingleChildScrollView(
@@ -783,7 +779,7 @@ class _MainPanelState extends State<_MainPanel> {
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消')),
+              child: const Text('Cancel')),
           FilledButton(
             onPressed: () => Navigator.pop(
               ctx,
@@ -798,7 +794,7 @@ class _MainPanelState extends State<_MainPanel> {
                 classroom: classroom.text.trim(),
               ),
             ),
-            child: Text(isEdit ? '保存' : '新增'),
+            child: Text(isEdit ? 'Save' : 'Create'),
           ),
         ],
       ),
@@ -810,10 +806,10 @@ class _MainPanelState extends State<_MainPanel> {
           ? await widget.bridge!.update(result)
           : await widget.bridge!.add(result);
       if (r.isOk) {
-        _toast(isEdit ? '课程已更新' : '课程已新增');
+        _toast(isEdit ? 'Course updated' : 'Course created');
         await _query();
       } else {
-        _toast('${isEdit ? "更新" : "新增"}失败: ${r.message}', error: true);
+        _toast('${isEdit ? "Update" : "Create"} failed: ${r.message}', error: true);
       }
     });
   }
@@ -822,15 +818,15 @@ class _MainPanelState extends State<_MainPanel> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('删除 ${c.code} / ${c.section} ?'),
+        title: const Text('Confirm delete'),
+        content: Text('Delete ${c.code} / ${c.section} ?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+              child: const Text('Cancel')),
           FilledButton.tonal(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('删除')),
+              child: const Text('Delete')),
         ],
       ),
     );
@@ -838,10 +834,10 @@ class _MainPanelState extends State<_MainPanel> {
     await _withBusy(() async {
       final r = await widget.bridge!.deleteCourse(c.code, c.section);
       if (r.isOk) {
-        _toast('课程已删除');
+        _toast('Course deleted');
         await _query();
       } else {
-        _toast('删除失败: ${r.message}', error: true);
+        _toast('Delete failed: ${r.message}', error: true);
       }
     });
   }
@@ -898,10 +894,10 @@ class _MainPanelState extends State<_MainPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('连接服务器', style: Theme.of(context).textTheme.titleLarge),
+            Text('Connect to Server', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              '默认以学生身份连接（只读）。连接后可点击右上"管理员登录"按钮提权。',
+              'Connects as student.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.outline,
                   ),
@@ -934,7 +930,7 @@ class _MainPanelState extends State<_MainPanel> {
             FilledButton.icon(
               onPressed: _busy ? null : _connect,
               icon: const Icon(Icons.link),
-              label: Text(_busy ? '连接中...' : '连接（学生身份）'),
+              label: Text(_busy ? 'Connecting...' : 'Connect (as student)'),
             ),
           ],
         ),
@@ -945,11 +941,11 @@ class _MainPanelState extends State<_MainPanel> {
   Widget _buildQueryCard() {
     final isSmall = widget.layout == LayoutSize.small;
     final titleAndButtons = <Widget>[
-      Text('课程查询', style: Theme.of(context).textTheme.titleLarge),
+      Text('Course Search', style: Theme.of(context).textTheme.titleLarge),
       FilledButton.tonalIcon(
         onPressed: _busy ? null : _viewAll,
         icon: const Icon(Icons.list_alt),
-        label: const Text('查看全部'),
+        label: const Text('All courses'),
       ),
       ValueListenableBuilder<bool>(
         valueListenable: widget.prefetching,
@@ -967,7 +963,7 @@ class _MainPanelState extends State<_MainPanel> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.refresh),
-                label: Text(fetching ? '刷新中…($count)' : '刷新课程'),
+                label: Text(fetching ? 'Refreshing…($count)' : 'Refresh courses'),
               );
             },
           );
@@ -977,30 +973,30 @@ class _MainPanelState extends State<_MainPanel> {
         FilledButton.tonalIcon(
           onPressed: _busy ? null : () => _showCourseDialog(),
           icon: const Icon(Icons.add),
-          label: const Text('新增'),
+          label: const Text('New'),
         )
       else
         OutlinedButton.icon(
           onPressed: _busy ? null : _promoteAdmin,
           icon: const Icon(Icons.admin_panel_settings),
-          label: const Text('管理员登录'),
+          label: const Text('Admin login'),
         ),
       if (widget.isAdmin)
         OutlinedButton.icon(
           onPressed: _busy ? null : _manageAdmins,
           icon: const Icon(Icons.manage_accounts),
-          label: const Text('账户管理'),
+          label: const Text('Manage admins'),
         ),
       if (widget.isAdmin)
         OutlinedButton.icon(
           onPressed: _busy ? null : _demoteToStudent,
           icon: const Icon(Icons.person),
-          label: const Text('退出管理员'),
+          label: const Text('Sign out admin'),
         ),
       OutlinedButton.icon(
         onPressed: _busy ? null : _disconnect,
         icon: const Icon(Icons.logout),
-        label: const Text('断开'),
+          label: const Text('Disconnect'),
       ),
     ];
 
@@ -1021,15 +1017,15 @@ class _MainPanelState extends State<_MainPanel> {
               segments: const [
                 ButtonSegment(
                     value: 'code',
-                    label: Text('按代码'),
+                    label: Text('By code'),
                     icon: Icon(Icons.tag)),
                 ButtonSegment(
                     value: 'instructor',
-                    label: Text('按教师'),
+                    label: Text('By instructor'),
                     icon: Icon(Icons.school)),
                 ButtonSegment(
                     value: 'semester',
-                    label: Text('按学期'),
+                    label: Text('By semester'),
                     icon: Icon(Icons.event)),
               ],
               selected: {_queryMode},
@@ -1052,7 +1048,7 @@ class _MainPanelState extends State<_MainPanel> {
                 const SizedBox(width: 8),
                 FilledButton(
                   onPressed: _busy ? null : _query,
-                  child: const Text('查询'),
+                  child: const Text('Search'),
                 ),
               ],
             ),
@@ -1073,7 +1069,7 @@ class _MainPanelState extends State<_MainPanel> {
             children: [
               Icon(Icons.inbox, size: 48, color: scheme.outline),
               const SizedBox(height: 8),
-              Text('无数据',
+              Text('No data',
                   style: Theme.of(context).textTheme.bodyMedium),
             ],
           ),
@@ -1094,9 +1090,9 @@ class _MainPanelState extends State<_MainPanel> {
               trailing: widget.isAdmin
                   ? PopupMenuButton<String>(
                       itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'edit', child: Text('编辑')),
+                        PopupMenuItem(value: 'edit', child: Text('Edit')),
                         PopupMenuItem(
-                            value: 'delete', child: Text('删除')),
+                            value: 'delete', child: Text('Delete')),
                       ],
                       onSelected: (v) {
                         if (v == 'edit') _showCourseDialog(edit: c);
@@ -1133,8 +1129,8 @@ class _AdminLoginDialog extends StatefulWidget {
 }
 
 class _AdminLoginDialogState extends State<_AdminLoginDialog> {
-  final _userCtl = TextEditingController(text: 'admin');
-  final _passCtl = TextEditingController(text: 'admin123');
+  final _userCtl = TextEditingController(text: '');
+  final _passCtl = TextEditingController(text: '');
 
   @override
   Widget build(BuildContext context) {
@@ -1142,7 +1138,7 @@ class _AdminLoginDialogState extends State<_AdminLoginDialog> {
       title: const Row(children: [
         Icon(Icons.admin_panel_settings),
         SizedBox(width: 8),
-        Text('管理员登录'),
+        Text('Admin Login'),
       ]),
       content: SizedBox(
         width: 320,
@@ -1171,14 +1167,14 @@ class _AdminLoginDialogState extends State<_AdminLoginDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(
             context,
             (user: _userCtl.text.trim(), pass: _passCtl.text),
           ),
-          child: const Text('登录'),
+          child: const Text('Login'),
         ),
       ],
     );
@@ -1212,7 +1208,6 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
   @override
   void initState() {
     super.initState();
-    // 仅在缓存还未加载时触发首拉，否则直接显示缓存
     if (!widget.adminListLoaded.value && widget.adminListError.value == null) {
       widget.onRefresh();
     }
@@ -1239,10 +1234,10 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
       final r = await widget.bridge.createAdmin(result.user, result.pass);
       if (!mounted) return;
       if (!r.isOk) {
-        _showSnack('新建失败: ${r.message}', error: true);
+        _showSnack('Create failed: ${r.message}', error: true);
         return;
       }
-      _showSnack('管理员已创建: ${result.user}');
+      _showSnack('Admin created: ${result.user}');
       await widget.onRefresh();
     });
   }
@@ -1259,7 +1254,7 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
       final r = await widget.bridge.updateAdmin(oldName, newUser, result.newPass);
       if (!mounted) return;
       if (!r.isOk) {
-        _showSnack('修改失败: ${r.message}', error: true);
+        _showSnack('Update failed: ${r.message}', error: true);
         return;
       }
       if (oldName == widget.currentUser && result.newPass.isNotEmpty) {
@@ -1267,7 +1262,7 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
         Navigator.pop(context, true);
         return;
       }
-      _showSnack('管理员已修改: $oldName → $newUser');
+      _showSnack('Admin updated: $oldName -> $newUser');
       await widget.onRefresh();
     });
   }
@@ -1276,19 +1271,19 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确定要删除管理员账户 "$name" 吗？此操作不可恢复。'),
+        title: const Text('Confirm Delete'),
+        content: Text('Delete admin account "$name"? This action cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(ctx).colorScheme.error,
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('删除'),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -1298,10 +1293,10 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
       final r = await widget.bridge.deleteAdmin(name);
       if (!mounted) return;
       if (!r.isOk) {
-        _showSnack('删除失败: ${r.message}', error: true);
+        _showSnack('Delete failed: ${r.message}', error: true);
         return;
       }
-      _showSnack('管理员已删除: $name');
+      _showSnack('Admin deleted: $name');
       await widget.onRefresh();
     });
   }
@@ -1317,15 +1312,15 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
       title: Row(children: [
         const Icon(Icons.manage_accounts),
         const SizedBox(width: 8),
-        const Text('管理员账户'),
+        const Text('Admin Accounts'),
         const Spacer(),
         IconButton(
-          tooltip: '刷新',
+          tooltip: 'Refresh',
           onPressed: _busy ? null : widget.onRefresh,
           icon: const Icon(Icons.refresh),
         ),
         IconButton(
-          tooltip: '新增',
+          tooltip: 'Add',
           onPressed: _busy ? null : _create,
           icon: const Icon(Icons.person_add),
         ),
@@ -1358,14 +1353,14 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
                             const SizedBox(height: 8),
                             FilledButton(
                               onPressed: widget.onRefresh,
-                              child: const Text('重试'),
+                              child: const Text('Retry'),
                             ),
                           ],
                         ),
                       );
                     }
                     if (admins.isEmpty) {
-                      return const Center(child: Text('（无管理员）'));
+                      return const Center(child: Text('(No admins)'));
                     }
                     return ListView.separated(
                       itemCount: admins.length,
@@ -1388,19 +1383,19 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
                           ),
                           title: Text(name),
                           subtitle:
-                              isSelf ? const Text('（当前账户）') : null,
+                              isSelf ? const Text('(current account)') : null,
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
-                                tooltip: '编辑',
+                                tooltip: 'Edit',
                                 onPressed:
                                     _busy ? null : () => _edit(name),
                                 icon: const Icon(Icons.edit),
                               ),
                               IconButton(
                                 tooltip:
-                                    isSelf ? '不能删除自己' : '删除',
+                                    isSelf ? 'Cannot delete self' : 'Delete',
                                 onPressed: (_busy || isSelf)
                                     ? null
                                     : () => _delete(name),
@@ -1424,7 +1419,7 @@ class _AdminManagementDialogState extends State<_AdminManagementDialog> {
           onPressed: _busy
               ? null
               : () => Navigator.pop(context, _selfPasswordChanged),
-          child: const Text('关闭'),
+          child: const Text('Close'),
         ),
       ],
     );
@@ -1447,7 +1442,7 @@ class _AdminCreateDialogState extends State<_AdminCreateDialog> {
       title: const Row(children: [
         Icon(Icons.person_add),
         SizedBox(width: 8),
-        Text('新增管理员'),
+        Text('New Admin'),
       ]),
       content: SizedBox(
         width: 320,
@@ -1476,14 +1471,14 @@ class _AdminCreateDialogState extends State<_AdminCreateDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(
             context,
             (user: _userCtl.text.trim(), pass: _passCtl.text),
           ),
-          child: const Text('创建'),
+          child: const Text('Create'),
         ),
       ],
     );
@@ -1507,7 +1502,7 @@ class _AdminEditDialogState extends State<_AdminEditDialog> {
       title: Row(children: [
         const Icon(Icons.edit),
         const SizedBox(width: 8),
-        Text('编辑：${widget.originalName}'),
+        Text('Edit: ${widget.originalName}'),
       ]),
       content: SizedBox(
         width: 360,
@@ -1526,7 +1521,7 @@ class _AdminEditDialogState extends State<_AdminEditDialog> {
               controller: _passCtl,
               obscureText: true,
               decoration: const InputDecoration(
-                labelText: 'New Password (留空表示不修改)',
+                labelText: 'New Password (leave blank to keep)',
                 prefixIcon: Icon(Icons.lock),
               ),
             ),
@@ -1536,30 +1531,30 @@ class _AdminEditDialogState extends State<_AdminEditDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+          child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(
             context,
             (newUser: _userCtl.text.trim(), newPass: _passCtl.text),
           ),
-          child: const Text('保存'),
+          child: const Text('Save'),
         ),
       ],
     );
   }
 }
 
-// ──────────────────────────────── 排序键 ────────────────────────────────
+
 enum CourseSortKey { code, title, instructor, section, day, classroom }
 
 const _kSortKeyLabels = {
-  CourseSortKey.code: '按代码',
-  CourseSortKey.title: '按标题',
-  CourseSortKey.instructor: '按教师',
-  CourseSortKey.section: '按学期/Section',
-  CourseSortKey.day: '按时间',
-  CourseSortKey.classroom: '按教室',
+  CourseSortKey.code: 'By Code',
+  CourseSortKey.title: 'By Title',
+  CourseSortKey.instructor: 'By Instructor',
+  CourseSortKey.section: 'By Semester/Section',
+  CourseSortKey.day: 'By Time',
+  CourseSortKey.classroom: 'By Classroom',
 };
 
 class _AllCoursesDialog extends StatelessWidget {
@@ -1783,7 +1778,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                   Icon(Icons.list_alt, color: scheme.primary),
                   const SizedBox(width: 8),
                   Flexible(
-                    child: Text('全部课程',
+                    child: Text('All Courses',
                         style: Theme.of(context).textTheme.titleLarge,
                         overflow: TextOverflow.ellipsis),
                   ),
@@ -1794,7 +1789,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                       builder: (ctx, loaded, _) {
                         final suffix = loaded ? '' : '+';
                         return Text(
-                          '${_filtered.length}/${_courses.length}$suffix · 已选 ${_selectedKeys.length}',
+                          '${_filtered.length}/${_courses.length}$suffix · ${_selectedKeys.length} selected',
                           style: Theme.of(context).textTheme.bodySmall,
                           overflow: TextOverflow.ellipsis,
                         );
@@ -1826,7 +1821,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                               onPressed: () =>
                                   setState(_selectedKeys.clear),
                               icon: const Icon(Icons.clear_all, size: 18),
-                              label: const Text('清空选择'),
+                              label: const Text('Clear Selection'),
                               style: TextButton.styleFrom(
                                 visualDensity: VisualDensity.compact,
                                 padding: const EdgeInsets.symmetric(
@@ -1851,7 +1846,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
               color: Colors.transparent,
               child: IconButton(
                 icon: const Icon(Icons.close),
-                tooltip: '关闭',
+                tooltip: 'Close',
                 onPressed: widget.onClose,
               ),
             ),
@@ -1870,12 +1865,12 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
               segments: const [
                 ButtonSegment(
                   value: 0,
-                  label: Text('列表 / 过滤'),
+                  label: Text('List / Filter'),
                   icon: Icon(Icons.list),
                 ),
                 ButtonSegment(
                   value: 1,
-                  label: Text('周历'),
+                  label: Text('Weekly'),
                   icon: Icon(Icons.calendar_view_week),
                 ),
               ],
@@ -1950,7 +1945,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       cell(_FilterField(
-                        label: '教师',
+                        label: 'Instructor',
                         icon: Icons.school,
                         controller: _instructorCtl,
                         suggestions: _suggestInstructor,
@@ -1958,7 +1953,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
-                        label: '学期',
+                        label: 'Semester',
                         icon: Icons.event,
                         controller: _semesterCtl,
                         suggestions: _suggestSemester,
@@ -1966,7 +1961,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
-                        label: '编码',
+                        label: 'Code',
                         icon: Icons.tag,
                         controller: _codeCtl,
                         suggestions: _suggestCode,
@@ -1974,7 +1969,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
-                        label: '教室',
+                        label: 'Classroom',
                         icon: Icons.location_on,
                         controller: _classroomCtl,
                         suggestions: _suggestClassroom,
@@ -1982,7 +1977,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                         onFocus: _onFilterFocus,
                       )),
                       cell(_FilterField(
-                        label: '时间/Day',
+                        label: 'Time/Day',
                         icon: Icons.calendar_today,
                         controller: _dayCtl,
                         suggestions: _suggestDay,
@@ -1996,7 +1991,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                           isDense: true,
                           isExpanded: true,
                           decoration: const InputDecoration(
-                            labelText: '排序',
+                            labelText: 'Sort',
                             prefixIcon: Icon(Icons.sort, size: 18),
                             isDense: true,
                             border: OutlineInputBorder(),
@@ -2014,7 +2009,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                       SizedBox(
                         width: 48,
                         child: IconButton.outlined(
-                          tooltip: _sortAsc ? '升序（点击改为降序）' : '降序（点击改为升序）',
+                          tooltip: _sortAsc ? 'Ascending (click to descend)' : 'Descending (click to ascend)',
                           onPressed: () =>
                               setState(() => _sortAsc = !_sortAsc),
                           icon: AnimatedSwitcher(
@@ -2050,7 +2045,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                             size: 40,
                             color: Theme.of(context).colorScheme.outline),
                         const SizedBox(height: 8),
-                        Text('无匹配课程',
+                        Text('No matching courses',
                             style: Theme.of(context).textTheme.bodyMedium),
                       ],
                     ),
@@ -2093,13 +2088,13 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                     color: Theme.of(context).colorScheme.error, size: 18),
                 const SizedBox(width: 8),
                 Flexible(
-                  child: Text('加载失败: $err',
+                  child: Text('Load failed: $err',
                       style: Theme.of(context).textTheme.bodySmall),
                 ),
                 const SizedBox(width: 8),
                 TextButton(
                   onPressed: () => widget.onRefresh(),
-                  child: const Text('重试'),
+                  child: const Text('Retry'),
                 ),
               ],
             ),
@@ -2121,7 +2116,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(width: 12),
-                    Text('正在后台同步课程…',
+                    Text('Syncing courses in background...',
                         style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
@@ -2180,14 +2175,14 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
             children: [
               Icon(Icons.event_note, color: scheme.primary),
               const SizedBox(width: 8),
-              Text('周历视图',
+              Text('Weekly View',
                   style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(width: 12),
               Flexible(
                 child: Text(
                   hasSelection
-                      ? '已叠加 ${_selectedCourses.length} 门课程'
-                      : '从左侧勾选课程查看时段分布',
+                      ? '${_selectedCourses.length} course(s) selected'
+                      : 'Select courses on the left to view weekly slots',
                   style: Theme.of(context).textTheme.bodySmall,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -2207,7 +2202,7 @@ class _AllCoursesViewState extends State<_AllCoursesView> {
   }
 }
 
-// ───────────────── 带输入 + 下拉建议的过滤器字段 ─────────────────
+
 class _FilterField extends StatefulWidget {
   final String label;
   final IconData icon;
@@ -2340,13 +2335,13 @@ class _WeeklyCalendar extends StatelessWidget {
   int? _dayIndex(String day) {
     final d = day.trim().toLowerCase();
     const map = {
-      'mon': 0, 'monday': 0, '一': 0, '周一': 0, '星期一': 0,
-      'tue': 1, 'tuesday': 1, '二': 1, '周二': 1, '星期二': 1,
-      'wed': 2, 'wednesday': 2, '三': 2, '周三': 2, '星期三': 2,
-      'thu': 3, 'thursday': 3, '四': 3, '周四': 3, '星期四': 3,
-      'fri': 4, 'friday': 4, '五': 4, '周五': 4, '星期五': 4,
-      'sat': 5, 'saturday': 5, '六': 5, '周六': 5, '星期六': 5,
-      'sun': 6, 'sunday': 6, '日': 6, '周日': 6, '星期日': 6, '天': 6,
+      'mon': 0, 'monday': 0,
+      'tue': 1, 'tuesday': 1,
+      'wed': 2, 'wednesday': 2,
+      'thu': 3, 'thursday': 3,
+      'fri': 4, 'friday': 4,
+      'sat': 5, 'saturday': 5,
+      'sun': 6, 'sunday': 6,
     };
     return map[d];
   }
@@ -2400,16 +2395,16 @@ class _WeeklyCalendar extends StatelessWidget {
     return LayoutBuilder(builder: (ctx, box) {
       const headerH = 28.0;
       const hourCol = 44.0;
-      const minColW = 96.0; // 列最小宽度，低于则横向滚动
+      const minColW = 96.0; // Min column width; scroll horizontally below this
 
-      // 自适应列宽：优先撑满；若空间不足则用最小列宽 + 横向滚动
+      // Adaptive column width: fill first; fall back to min width + horizontal scroll
       final availW = box.maxWidth - hourCol;
       final fitW = availW / _days.length;
       final colW = fitW >= minColW ? fitW : minColW;
       final needsHScroll = fitW < minColW;
       final gridW = hourCol + colW * _days.length;
 
-      // 纵向像素/分钟 —— 至少给 26px/小时 保证文字不挤
+      // Vertical px/min - at least 26px/hour so text is not cramped
       const minPxPerHour = 26.0;
       final availH = box.maxHeight - headerH;
       final natural = availH / totalMin;
@@ -2417,7 +2412,7 @@ class _WeeklyCalendar extends StatelessWidget {
       final needsVScroll = pxPerMin > natural + 0.0001;
       final gridH = headerH + pxPerMin * totalMin;
 
-      // 空状态
+
       if (courses.isEmpty) {
         return DecoratedBox(
           decoration: BoxDecoration(
@@ -2432,10 +2427,10 @@ class _WeeklyCalendar extends StatelessWidget {
                 Icon(Icons.event_available,
                     size: 48, color: scheme.outline),
                 const SizedBox(height: 8),
-                Text('暂无课程',
+                Text('No courses',
                     style: Theme.of(ctx).textTheme.bodyMedium),
                 const SizedBox(height: 4),
-                Text('在左侧勾选课程后在此叠加显示周历',
+                Text('Select courses on the left to overlay them here',
                     style: Theme.of(ctx)
                         .textTheme
                         .bodySmall
@@ -2554,7 +2549,7 @@ class _WeeklyCalendar extends StatelessWidget {
         ),
       );
 
-      // 容器 + 双向滚动兜底，永不溢出
+      // Container + bidirectional scroll fallback, never overflows
       Widget content = grid;
       if (needsVScroll) {
         content = SingleChildScrollView(
