@@ -192,16 +192,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _exeGuess() {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
     final candidates = [
+      // Release layout: <ui-exe-dir>\core\dcn_client.exe
+      '$exeDir\\core\\dcn_client.exe',
+      '$exeDir\\dcn_client.exe',
+      // Dev layouts (running from project root or build dir)
       r'..\..\build\programs\Client\dcn_client.exe',
       r'..\build\programs\Client\dcn_client.exe',
       r'build\programs\Client\dcn_client.exe',
-      r'D:\Handle\dev\dcn\DCN1003-Group21-2026\build\programs\Client\dcn_client.exe',
+      r'cmake-build-debug\programs\Client\dcn_client.exe',
+      r'.\core\dcn_client.exe',
     ];
     for (final c in candidates) {
       if (File(c).existsSync()) return File(c).absolute.path;
     }
-    return candidates.last;
+    return candidates.first;
   }
 
   void _log(String dir, String line) {
